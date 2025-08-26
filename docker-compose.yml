@@ -1,0 +1,13 @@
+
+version: "3.8"
+services:
+  vnwatch:
+    build: .
+    container_name: vnwatch
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+    restart: unless-stopped

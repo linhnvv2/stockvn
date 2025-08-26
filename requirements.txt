@@ -1,0 +1,8 @@
+
+streamlit>=1.25.0
+pandas>=1.5.0
+python-dotenv>=1.0.0
+vnstock==0.1.1
+streamlit-autorefresh>=0.0.4  # optional for auto-refresh feature
+requests>=2.31.0
+certifi>=2024.7.4
