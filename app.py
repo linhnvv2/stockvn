@@ -2,9 +2,10 @@
 # app.py
 # VN Watchlist + Email Alerts (1p) – vnstock==0.1.1 + Fallback VNDirect snapshot + Daily
 
-import os, json, time, smtplib, ssl
+import os, json, time, smtplib, ssl, csv, uuid
 from email.message import EmailMessage
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -29,6 +30,7 @@ except Exception:
 # --- Storage files ---
 WATCHLIST_FILE = "watchlist.json"
 ALERTS_FILE    = "alerts.json"
+EMAIL_LOG_FILE = "email_log.csv"
 
 # --- SMTP / ENV ---
 load_dotenv()
@@ -229,12 +231,36 @@ def get_latest_price(symbol: str) -> dict:
     return {"symbol": symbol, "price": None, "time": None, "err": "all providers failed"}
 
 # --- email ---
+def log_email(subject: str, to_email: str, status: str, details: str = ""):
+    """Log email sending activity to a CSV file"""
+    log_file = Path(EMAIL_LOG_FILE)
+    log_entry = {
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'to': to_email,
+        'subject': subject,
+        'status': status,
+        'details': details
+    }
+    
+    # Create file with header if it doesn't exist
+    if not log_file.exists():
+        with open(log_file, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=log_entry.keys())
+            writer.writeheader()
+    
+    # Append log entry
+    with open(log_file, 'a', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=log_entry.keys())
+        writer.writerow(log_entry)
+
 def send_email(subject: str, body: str, to_email: str):
     """Send email with STARTTLS (587) or SSL (465) using certifi CA bundle.
     Set SMTP_DEBUG=1 in .env to enable debug output.
     """
     if not (SMTP_SERVER and SMTP_PORT and SMTP_USER and SMTP_PASS and (to_email or ALERT_TO)):
-        raise RuntimeError("Thiếu cấu hình SMTP hoặc email nhận (ALERT_TO) trong .env")
+        error_msg = "Thiếu cấu hình SMTP hoặc email nhận (ALERT_TO) trong .env"
+        log_email(subject, to_email, "failed", error_msg)
+        raise RuntimeError(error_msg)
 
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -244,23 +270,20 @@ def send_email(subject: str, body: str, to_email: str):
 
     ctx = ssl.create_default_context(cafile=certifi.where())
 
-    smtp_debug = os.getenv("SMTP_DEBUG", "0") in ("1", "true", "True")
-
-    if SMTP_PORT == 465:
-        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=ctx) as server:
-            if smtp_debug:
+    try:
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            if os.getenv("SMTP_DEBUG"):
                 server.set_debuglevel(1)
-            server.login(SMTP_USER, SMTP_PASS)
-            server.send_message(msg)
-    else:
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=15) as server:
-            if smtp_debug:
-                server.set_debuglevel(1)
-            server.ehlo()
             server.starttls(context=ctx)
-            server.ehlo()
             server.login(SMTP_USER, SMTP_PASS)
             server.send_message(msg)
+            log_email(subject, to_email, "sent")
+            return True
+    except Exception as e:
+        error_msg = str(e)
+        log_email(subject, to_email, "failed", error_msg)
+        print(f"Error sending email: {error_msg}")
+        raise
 
 def get_stock_price(symbol: str) -> float:
     """Get current price for a stock symbol using vnstock"""
@@ -769,3 +792,166 @@ if watchlist and alerts:
             st.error(f"Gửi email thất bại: {e}")
     else:
         st.success("✅ Chưa có alert nào khớp lúc này.")
+
+def delete_email_logs(entries_to_keep):
+    """Save only the specified entries to the log file"""
+    log_file = Path(EMAIL_LOG_FILE)
+    fieldnames = ['timestamp', 'to', 'subject', 'status', 'details']
+    
+    with open(log_file, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        if entries_to_keep is not None:  # If None, it means delete all
+            writer.writerows(entries_to_keep)
+
+# --- Display Email History ---
+st.markdown("## 📧 Lịch sử gửi email")
+try:
+    if not Path(EMAIL_LOG_FILE).exists():
+        st.info("Chưa có lịch sử gửi email nào.")
+    else:
+        # Read the log file
+        with open(EMAIL_LOG_FILE, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            log_entries = list(reader)
+        
+        if not log_entries:
+            st.info("Chưa có lịch sử gửi email nào.")
+        else:
+            # Add search and filter options in a clean layout
+            col1, col2 = st.columns([2, 3])
+            with col1:
+                search_term = st.text_input("🔍 Tìm kiếm (tiêu đề hoặc email)", 
+                                         help="Nhập từ khóa để lọc lịch sử")
+            with col2:
+                status_filter = st.radio(
+                    "Trạng thái:",
+                    ["Tất cả", "✅ Thành công", "❌ Thất bại"],
+                    horizontal=True,
+                    index=0
+                )
+            
+            st.markdown("---")
+            filtered_count = 0
+            
+            # Filter and display emails
+            for entry in reversed(log_entries):  # Show newest first
+                # Apply filters
+                subject = entry.get('subject', '').lower()
+                to_email = entry.get('to', '').lower()
+                status = entry.get('status', '').lower()
+                
+                if search_term and search_term.lower() not in subject + to_email:
+                    continue
+                    
+                if status_filter == "✅ Thành công" and status != 'sent':
+                    continue
+                if status_filter == "❌ Thất bại" and status != 'failed':
+                    continue
+                
+                # Format entry
+                timestamp = entry.get('timestamp', '')
+                try:
+                    dt = pd.to_datetime(timestamp)
+                    formatted_time = dt.strftime('%d/%m/%Y %H:%M')
+                except:
+                    formatted_time = timestamp
+                
+                # Status display
+                status_display = "✅ Gửi thành công" if status == 'sent' else "❌ Gửi thất bại"
+                status_color = "#4CAF50" if status == 'sent' else "#f44336"
+                
+                # Create a unique key for each email's delete button
+                delete_key = f"delete_{entry.get('timestamp', '')}_{entry.get('subject', '')}"
+                
+                # Display as a card with delete button
+                col1, col2 = st.columns([6, 1])
+                
+                with col1:
+                    st.markdown(f"""
+                    <div style='
+                        border: 1px solid #e0e0e0;
+                        border-radius: 8px;
+                        padding: 12px 16px;
+                        margin: 8px 0;
+                        background-color: white;
+                        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                    '>
+                        <div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'>
+                            <h4 style='margin: 0; color: #1a237e;'>{entry.get('subject', 'Không có tiêu đề')}</h4>
+                            <span style='color: {status_color}; font-weight: 500; font-size: 0.9rem;'>{status_display}</span>
+                        </div>
+                        <div style='color: #555; font-size: 0.9rem; margin-bottom: 4px;'>
+                            <span>👤 {entry.get('to', '')}</span>
+                            <span style='margin: 0 8px; color: #ddd;'>•</span>
+                            <span>🕒 {formatted_time}</span>
+                        </div>
+                        {f"<div style='color: #666; font-size: 0.85rem; padding: 6px 0; border-top: 1px dashed #eee; margin-top: 8px;'>{entry.get('details', '')}</div>" if entry.get('details') else ''}
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col2:
+                    if st.button("🗑️", key=f"del_{delete_key}", help="Xóa email này"):
+                        # Create a new list without the deleted email
+                        updated_entries = [e for e in log_entries 
+                                        if not (e.get('timestamp') == entry.get('timestamp') 
+                                              and e.get('subject') == entry.get('subject'))]
+                        
+                        # Save the updated entries back to the file
+                        with open(EMAIL_LOG_FILE, 'w', newline='', encoding='utf-8') as f:
+                            writer = csv.DictWriter(f, fieldnames=['timestamp', 'to', 'subject', 'status', 'details'])
+                            writer.writeheader()
+                            writer.writerows(updated_entries)
+                        
+                        st.success(f"Đã xóa email: {entry.get('subject', '')}")
+                        time.sleep(0.5)  # Small delay to show the success message
+                        st.rerun()  # Refresh the page to show the updated list
+                    
+                    filtered_count += 1
+            
+            # Show empty state if no results
+            if filtered_count == 0:
+                st.warning("Không tìm thấy email nào phù hợp với bộ lọc.")
+            
+            # Management controls
+            st.markdown("---")
+            
+            # Action buttons in columns
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Download button for the full log
+                csv_data = pd.DataFrame(log_entries).to_csv(index=False, encoding='utf-8-sig')
+                st.download_button(
+                    label="💾 Tải xuống toàn bộ lịch sử (CSV)",
+                    data=csv_data,
+                    file_name=f'email_history_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv',
+                    mime='text/csv',
+                    use_container_width=True
+                )
+            
+            with col2:
+                # Delete all button with confirmation
+                if st.button("🗑️ Xóa tất cả lịch sử", use_container_width=True, type="secondary"):
+                    if st.session_state.get('confirm_delete_all'):
+                        with open(EMAIL_LOG_FILE, 'w', newline='', encoding='utf-8') as f:
+                            writer = csv.DictWriter(f, fieldnames=['timestamp', 'to', 'subject', 'status', 'details'])
+                            writer.writeheader()
+                        st.success("Đã xóa toàn bộ lịch sử email!")
+                        time.sleep(0.5)
+                        st.session_state.pop('confirm_delete_all', None)
+                        st.rerun()
+                    else:
+                        st.session_state['confirm_delete_all'] = True
+                        st.warning("Nhấn lại để xác nhận xóa toàn bộ lịch sử")
+            
+            # Show confirmation message if needed
+            if st.session_state.get('confirm_delete_all'):
+                st.warning("⚠️ Cảnh báo: Hành động này sẽ xóa vĩnh viễn toàn bộ lịch sử email. Nhấn nút 'Xóa tất cả lịch sử' lần nữa để xác nhận.")
+            
+            # Add a note about the date format
+            st.caption(f"Hiển thị {filtered_count}/{len(log_entries)} email • Định dạng thời gian: NĂM-THÁNG-NGÀY GIỜ:PHÚT")
+except Exception as e:
+    st.error(f"Không thể tải lịch sử email: {str(e)}")
+    if 'log_entries' in locals():
+        st.json(log_entries[:2])  # Show sample for debugging
