@@ -579,6 +579,11 @@ else:
         # Store the original price for display
         display_price = current_price
         
+        # Get existing note if it exists
+        existing_note = ''
+        if isinstance(item, dict):
+            existing_note = item.get('note', '')
+        
         data_rows.append({
             "Mã": symbol,
             "Giá": current_price,  # Store original price for calculations
@@ -586,32 +591,62 @@ else:
             "Thay đổi": price_change,
             "Thời gian": info.get("time") or datetime.now().strftime("%H:%M:%S"),
             "Nguồn": note,
+            "Ghi chú": existing_note,  # Add notes field
             "_history": history_text.strip()
         })
     
     # Display the table with tooltips
     if data_rows:
+        # Debug: Print data types
+        for i, row in enumerate(data_rows):
+            print(f"Row {i} data types:")
+            for k, v in row.items():
+                print(f"  {k}: {type(v)} - {v}")
+        
         # Create a clean DataFrame with proper data types
-        df = pd.DataFrame([{
-            'Mã CK': row['Mã'],
-            'Giá hiện tại': row['Giá hiển thị'],  # Use the pre-formatted display price
-            'Thay đổi': f"{'🔼' if row['Thay đổi'] >= 0 else '🔽'} {abs(row['Thay đổi']):.2f}%" if pd.notnull(row['Thay đổi']) else '',
-            'Cập nhật': row['Thời gian'],
-            'Nguồn': row['Nguồn'],
-            '_history': row['_history']
-        } for row in data_rows])
+        df_rows = []
+        for row in data_rows:
+            try:
+                # Safely format price change
+                price_change = row.get('Thay đổi')
+                change_display = ''
+                if pd.notnull(price_change):
+                    change_icon = '🔼' if float(price_change) >= 0 else '🔽'
+                    change_display = f"{change_icon} {abs(float(price_change)):.2f}%"
+                
+                # Create row with safe string conversion
+                df_rows.append({
+                    'Mã CK': str(row.get('Mã', '')),
+                    'Giá hiện tại': str(row.get('Giá hiển thị', 'N/A')),
+                    'Thay đổi': change_display,
+                    'Cập nhật': str(row.get('Thời gian', '')),
+                    'Nguồn': str(row.get('Nguồn', '')),
+                    'Ghi chú': str(row.get('Ghi chú', '')),
+                    '_history': str(row.get('_history', ''))
+                })
+            except Exception as e:
+                print(f"Error processing row: {e}")
+                continue
+                
+        df = pd.DataFrame(df_rows)
         
         # Add checkboxes for deletion
         df['Chọn để xóa'] = False
         
-        # Display the table with checkboxes
+        # Display the table with checkboxes and notes
         edited_df = st.data_editor(
-            df[['Mã CK', 'Giá hiện tại', 'Cập nhật', 'Nguồn', 'Chọn để xóa']],
+            df[['Mã CK', 'Giá hiện tại', 'Cập nhật', 'Nguồn', 'Ghi chú', 'Chọn để xóa']],
             column_config={
                 'Mã CK': 'Mã CK',
                 'Giá hiện tại': 'Giá hiện tại',
                 'Cập nhật': 'Cập nhật',
                 'Nguồn': st.column_config.TextColumn('Nguồn', help=df['_history'].values.tolist()),
+                'Ghi chú': st.column_config.TextColumn(
+                    'Ghi chú',
+                    help='Nhập ghi chú cho mã cổ phiếu',
+                    default='',
+                    max_chars=100
+                ),
                 'Chọn để xóa': st.column_config.CheckboxColumn(
                     'Chọn để xóa',
                     help='Chọn để xóa khỏi danh sách theo dõi',
@@ -620,7 +655,8 @@ else:
             },
             hide_index=True,
             use_container_width=True,
-            key='watchlist_editor'
+            key='watchlist_editor',
+            num_rows='dynamic'
         )
         
         # Add delete button
@@ -634,6 +670,28 @@ else:
                         st.toast(f'✅ Đã xóa mã {symbol} khỏi danh sách theo dõi')
                     save_json(WATCHLIST_FILE, watchlist)
                     st.rerun()
+        
+        # Save changes if any notes were updated
+        if not edited_df.empty and 'Ghi chú' in edited_df.columns:
+            notes_updated = False
+            for idx, row in edited_df.iterrows():
+                symbol = row['Mã CK']
+                new_note = row.get('Ghi chú', '')
+                # Find the item in watchlist and update its note
+                for i, item in enumerate(watchlist):
+                    item_symbol = item if isinstance(item, str) else item.get('symbol', '')
+                    if item_symbol == symbol:
+                        if isinstance(watchlist[i], dict):
+                            if watchlist[i].get('note') != new_note:
+                                watchlist[i]['note'] = new_note
+                                notes_updated = True
+                        else:
+                            watchlist[i] = {'symbol': symbol, 'note': new_note}
+                            notes_updated = True
+            if notes_updated:
+                save_json(WATCHLIST_FILE, watchlist)
+                st.toast("✅ Đã cập nhật ghi chú")
+                st.rerun()
     
     # Store price_map for alert evaluation
     price_map = {row["Mã"]: row["Giá"] for row in data_rows if row["Giá"] is not None}
