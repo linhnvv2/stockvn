@@ -1,1 +1,38 @@
-[]
+[
+  {
+    "id": "FPT->=-110.0-1756276922",
+    "symbol": "FPT",
+    "op": ">=",
+    "target": 110.0,
+    "email": "linhnvv2@gmail.com",
+    "enabled": true,
+    "last_sent_at": ""
+  },
+  {
+    "id": "PDR->=-25.0-1756276994",
+    "symbol": "PDR",
+    "op": ">=",
+    "target": 25.0,
+    "email": "linhnvv2@gmail.com",
+    "enabled": true,
+    "last_sent_at": ""
+  },
+  {
+    "id": "TPB->=-21.0-1756277005",
+    "symbol": "TPB",
+    "op": ">=",
+    "target": 21.0,
+    "email": "linhnvv2@gmail.com",
+    "enabled": true,
+    "last_sent_at": ""
+  },
+  {
+    "id": "MFS->=-47.0-1756277023",
+    "symbol": "MFS",
+    "op": ">=",
+    "target": 47.0,
+    "email": "linhnvv2@gmail.com",
+    "enabled": true,
+    "last_sent_at": ""
+  }
+]

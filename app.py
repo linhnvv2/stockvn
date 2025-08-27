@@ -711,6 +711,9 @@ if watchlist and alerts:
     if triggered:
         st.warning(f"🔔 Có {len(triggered)} alert khớp điều kiện. Đang gửi email…")
         
+        # Create a copy of the alerts to modify
+        updated_alerts = alerts.copy()
+        
         # Prepare combined email content
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M')
         
@@ -727,15 +730,19 @@ if watchlist and alerts:
             subject = f"[ALERTS] {len(triggered)} mã đạt điều kiện {condition} {target_price}"
         body = f"Danh sách các mã đạt điều kiện vào lúc {current_time}:\n\n"
         
-        # Add each triggered alert to the email body
+        # Update the alerts with last_sent_at and keep them in the system
         for a in triggered:
             sym = a["symbol"].upper()
             px = price_map.get(sym)
             body += f"• Mã: {sym}\n"
             body += f"  Điều kiện: Giá {a['op']} {a['target']:,.0f}\n"
             body += f"  Giá hiện tại: {px:,.0f}\n\n"
-            # Update last_sent_at for each triggered alert
-            a["last_sent_at"] = current_time
+            
+            # Find and update the alert in the original alerts list
+            for idx, alert in enumerate(updated_alerts):
+                if alert.get('id') == a.get('id'):
+                    updated_alerts[idx]["last_sent_at"] = current_time
+                    break
         
         try:
             # Get email recipients from alert or fallback to ALERT_TO
@@ -752,9 +759,10 @@ if watchlist and alerts:
             # Send to all recipients
             for email in email_recipients:
                 send_email(subject, body, email)
+                
+            # Save all alerts (both triggered and pending) with updated timestamps
+            save_json(ALERTS_FILE, updated_alerts)
             st.toast(f"Đã gửi email tổng hợp {len(triggered)} alert", icon="✉️")
-            # Save the updated alerts with last_sent_at timestamps
-            save_json(ALERTS_FILE, alerts)
             # Force a rerun to update the UI with the latest alerts
             st.rerun()
         except Exception as e:
