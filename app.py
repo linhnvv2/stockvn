@@ -37,7 +37,7 @@ load_dotenv()
 SMTP_SERVER = os.getenv("SMTP_SERVER", "")
 SMTP_PORT   = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER   = os.getenv("SMTP_USER", "")
-SMTP_PASS   = os.getenv("SMTP_PASS", "")
+SMTP_PASS   = os.getenv("SMTP_PASS", st.secrets["SMTP_PASS"])
 ALERT_TO    = os.getenv("ALERT_TO", "")
 
 # --- Common schema for alerts table ---
